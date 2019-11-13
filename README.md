@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/vearutop/dynhist-go.svg?branch=master)](https://travis-ci.org/vearutop/dynhist-go)
 [![Coverage Status](https://codecov.io/gh/vearutop/dynhist-go/branch/master/graph/badge.svg)](https://codecov.io/gh/vearutop/dynhist-go)
-[![GoDoc](https://godoc.org/github.com/vearutop/dynhist-go?status.svg)](https://godoc.org/github.com/vearutop/dynhist-go)
+[![GoDevDoc](https://img.shields.io/badge/dev-doc-00ADD8?logo=go)](https://pkg.go.dev/github.com/vearutop/dynhist-go)
 ![Code lines](https://sloc.xyz/github/vearutop/dynhist-go/?category=code)
 ![Comments](https://sloc.xyz/github/vearutop/dynhist-go/?category=comments)
 
