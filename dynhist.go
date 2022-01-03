@@ -183,6 +183,7 @@ func (c *Collector) String() string {
 	sLen := ""
 
 	var res string
+
 	if c.PrintSum {
 		sLen = printfLen("%.2f", c.Sum)
 		res = fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% %"+sLen+"s (%d events)\n", "min", "max", "cnt", "sum", c.Count)
