@@ -1,2 +1,5 @@
 /.idea
-/coverage.txt
+/*.coverprofile
+/.vscode
+/bench-*.txt
+/vendor

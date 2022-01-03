@@ -24,6 +24,9 @@ type Collector struct {
 	// Buckets is a list of available buckets.
 	Buckets []Bucket
 
+	// PrintSum enables printing of a summary value in a bucket.
+	PrintSum bool
+
 	// RawValues stores incoming events, disabled by default. Use non-nil value to enable.
 	RawValues []float64
 
@@ -38,6 +41,7 @@ type Bucket struct {
 	Min   float64
 	Max   float64
 	Count int
+	Sum   float64
 }
 
 // ExpWidth creates a weight function with exponential bucket width growing.
@@ -66,16 +70,18 @@ func AvgWidth(b1, b2, bTot Bucket) float64 {
 }
 
 // Add collects value.
-func (c *Collector) Add(v float64) {
+func (c *Collector) Add(v float64) { // nolint:funlen,cyclop
 	c.Lock()
 	defer func() {
 		if len(c.Buckets) > c.BucketsLimit {
 			minWeight := 0.0
 			mergePoint := 0
+
 			for i := 1; i < len(c.Buckets); i++ {
 				if mergePoint == 0 {
 					mergePoint = i
 					minWeight = c.WeightFunc(c.Buckets[i-1], c.Buckets[i], c.Bucket)
+
 					continue
 				}
 
@@ -85,14 +91,18 @@ func (c *Collector) Add(v float64) {
 					mergePoint = i
 				}
 			}
+
 			b1 := c.Buckets[mergePoint-1]
 			b2 := c.Buckets[mergePoint]
 			merged := Bucket{
 				Count: b1.Count + b2.Count,
+				Sum:   b1.Sum + b2.Sum,
 				Min:   b1.Min,
 				Max:   b2.Max,
 			}
+
 			c.Buckets = append(c.Buckets[:mergePoint-1], c.Buckets[mergePoint:]...)
+
 			c.Buckets[mergePoint-1] = merged
 		}
 		c.Unlock()
@@ -102,6 +112,7 @@ func (c *Collector) Add(v float64) {
 		c.RawValues = append(c.RawValues, v)
 	}
 	c.Count++
+	c.Sum += v
 
 	if len(c.Buckets) == 0 {
 		if c.BucketsLimit == 0 {
@@ -116,6 +127,7 @@ func (c *Collector) Add(v float64) {
 		c.Buckets[0].Min = v
 		c.Buckets[0].Max = v
 		c.Buckets[0].Count = 1
+		c.Buckets[0].Sum = v
 
 		c.Min = v
 		c.Max = v
@@ -124,14 +136,14 @@ func (c *Collector) Add(v float64) {
 	}
 
 	if v < c.Min {
-		c.Buckets = append([]Bucket{{Count: 1, Min: v, Max: v}}, c.Buckets...)
+		c.Buckets = append([]Bucket{{Count: 1, Min: v, Max: v, Sum: v}}, c.Buckets...)
 		c.Min = v
 
 		return
 	}
 
 	if v > c.Max {
-		c.Buckets = append(c.Buckets, Bucket{Count: 1, Min: v, Max: v})
+		c.Buckets = append(c.Buckets, Bucket{Count: 1, Min: v, Max: v, Sum: v})
 		c.Max = v
 
 		return
@@ -142,13 +154,16 @@ func (c *Collector) Add(v float64) {
 		if v >= b.Min {
 			if v <= b.Max {
 				c.Buckets[i].Count++
+				c.Buckets[i].Sum += v
+
 				return
 			}
 		} else {
 			// Insert new bucket.
 			c.Buckets = append(c.Buckets, Bucket{})
 			copy(c.Buckets[i+1:], c.Buckets[i:])
-			c.Buckets[i] = Bucket{Count: 1, Min: v, Max: v}
+			c.Buckets[i] = Bucket{Count: 1, Min: v, Max: v, Sum: v}
+
 			return
 		}
 	}
@@ -165,7 +180,15 @@ func (c *Collector) String() string {
 	}
 
 	cLen := printfLen("%d", c.Count)
-	res := fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% (%d events)\n", "min", "max", "cnt", c.Count)
+	sLen := ""
+
+	var res string
+	if c.PrintSum {
+		sLen = printfLen("%.2f", c.Sum)
+		res = fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% %"+sLen+"s (%d events)\n", "min", "max", "cnt", "sum", c.Count)
+	} else {
+		res = fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% (%d events)\n", "min", "max", "cnt", c.Count)
+	}
 
 	for _, b := range c.Buckets {
 		percent := float64(100*b.Count) / float64(c.Count)
@@ -179,7 +202,11 @@ func (c *Collector) String() string {
 			dots = " " + dots
 		}
 
-		res += fmt.Sprintf("[%"+nLen+".2f %"+nLen+".2f] %"+cLen+"d %5.2f%%%s\n", b.Min, b.Max, b.Count, percent, dots)
+		if c.PrintSum {
+			res += fmt.Sprintf("[%"+nLen+".2f %"+nLen+".2f] %"+cLen+"d %5.2f%% %"+sLen+".2f%s\n", b.Min, b.Max, b.Count, percent, b.Sum, dots)
+		} else {
+			res += fmt.Sprintf("[%"+nLen+".2f %"+nLen+".2f] %"+cLen+"d %5.2f%%%s\n", b.Min, b.Max, b.Count, percent, dots)
+		}
 	}
 
 	return res
@@ -187,6 +214,7 @@ func (c *Collector) String() string {
 
 func printfLen(format string, val interface{}) string {
 	s := fmt.Sprintf(format, val)
+
 	return strconv.Itoa(len(s))
 }
 
