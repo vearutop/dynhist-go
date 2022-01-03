@@ -3,6 +3,7 @@ module github.com/vearutop/dynhist-go
 go 1.12
 
 require (
+	github.com/bool64/dev v0.2.5
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/stretchr/testify v1.4.0
