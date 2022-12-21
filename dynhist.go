@@ -70,7 +70,7 @@ func AvgWidth(b1, b2, bTot Bucket) float64 {
 }
 
 // Add collects value.
-func (c *Collector) Add(v float64) { // nolint:funlen,cyclop
+func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 	c.Lock()
 	defer func() {
 		if len(c.Buckets) > c.BucketsLimit {
