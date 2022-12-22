@@ -3,6 +3,7 @@ package dynhist_test
 import (
 	"fmt"
 	"math/rand"
+	"runtime/metrics"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -293,4 +294,23 @@ func TestLearnLatency(t *testing.T) {
 	}
 
 	fmt.Printf("%.2f %.2f %.2f\n", minDelta, bestSumWidthPow, bestSpacingPow)
+}
+
+func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
+	samples := []metrics.Sample{{Name: "/gc/heap/allocs-by-size:bytes"}}
+	cnt := 0
+
+	for i := 0; i < 100; i++ {
+		a := make([]byte, 350000)
+		cnt += len(a)
+	}
+
+	metrics.Read(samples)
+
+	h := samples[0].Value.Float64Histogram()
+
+	hh := dynhist.Collector{}
+	hh.LoadFromRuntimeMetrics(h)
+
+	assert.Greater(t, hh.Percentile(50), 1.0)
 }
