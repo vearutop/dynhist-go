@@ -4,6 +4,7 @@ package dynhist
 import (
 	"fmt"
 	"math"
+	"runtime/metrics"
 	"strconv"
 	"sync"
 )
@@ -211,6 +212,34 @@ func (c *Collector) String() string {
 	}
 
 	return res
+}
+
+// LoadFromRuntimeMetrics replaces existing buckets with data from metrics.Float64Histogram.
+func (c *Collector) LoadFromRuntimeMetrics(h *metrics.Float64Histogram) {
+	c.Lock()
+	defer c.Unlock()
+
+	c.Buckets = make([]Bucket, len(h.Buckets)-1)
+	c.BucketsLimit = len(h.Buckets)
+	c.Bucket.Count = 0
+
+	prev := h.Buckets[0]
+	c.Bucket.Min = prev
+
+	for i, b := range h.Buckets[1:] {
+		bb := Bucket{}
+
+		bb.Min = prev
+		bb.Max = b
+		prev = b
+
+		bb.Count = int(h.Counts[i])
+
+		c.Bucket.Count += bb.Count
+		c.Bucket.Max = b
+
+		c.Buckets[i] = bb
+	}
 }
 
 func printfLen(format string, val interface{}) string {
