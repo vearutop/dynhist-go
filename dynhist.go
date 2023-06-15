@@ -179,6 +179,10 @@ func (c *Collector) String() string {
 	if printfLen("%.2f", c.Max) > nLen {
 		nLen = printfLen("%.2f", c.Max)
 	}
+	// if c.Max is +Inf, the second largest element can be the longest.
+	if maxLen := printfLen("%.2f", c.Buckets[len(c.Buckets)-1].Min); maxLen > nLen {
+		nLen = maxLen
+	}
 
 	cLen := printfLen("%d", c.Count)
 	sLen := ""
@@ -221,19 +225,22 @@ func (c *Collector) LoadFromRuntimeMetrics(h *metrics.Float64Histogram) {
 
 	c.Buckets = make([]Bucket, len(h.Buckets)-1)
 	c.BucketsLimit = len(h.Buckets)
-	c.Bucket.Count = 0
-
-	prev := h.Buckets[0]
-	c.Bucket.Min = prev
+	c.Bucket = Bucket{
+		Min: h.Buckets[0],
+		Max: h.Buckets[0],
+	}
 
 	for i, b := range h.Buckets[1:] {
-		bb := Bucket{}
+		bb := Bucket{
+			Min:   c.Bucket.Max,
+			Max:   b,
+			Count: int(h.Counts[i]),
+		}
 
-		bb.Min = prev
-		bb.Max = b
-		prev = b
-
-		bb.Count = int(h.Counts[i])
+		if bb.Count != 0 && !math.IsInf(b, 0) {
+			bb.Sum = float64(bb.Count) * b
+			c.Bucket.Sum += bb.Sum
+		}
 
 		c.Bucket.Count += bb.Count
 		c.Bucket.Max = b
