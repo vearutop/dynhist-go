@@ -314,4 +314,5 @@ func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
 
 	assert.Greater(t, hh.Bucket.Sum, float64(size))
 	assert.Greater(t, hh.Percentile(50), 1.0)
+	assert.Contains(t, hh.String(), "  +Inf]", "alignment error in second column")
 }
