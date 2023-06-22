@@ -298,10 +298,10 @@ func TestLearnLatency(t *testing.T) {
 
 func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
 	samples := []metrics.Sample{{Name: "/gc/heap/allocs-by-size:bytes"}}
-	cnt := 0
+	cnt, size := 0, 350000
 
 	for i := 0; i < 100; i++ {
-		a := make([]byte, 350000)
+		a := make([]byte, size)
 		cnt += len(a)
 	}
 
@@ -312,5 +312,7 @@ func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
 	hh := dynhist.Collector{}
 	hh.LoadFromRuntimeMetrics(h)
 
+	assert.Greater(t, hh.Bucket.Sum, float64(size))
 	assert.Greater(t, hh.Percentile(50), 1.0)
+	assert.Contains(t, hh.String(), "  +Inf]", "alignment error in second column")
 }
