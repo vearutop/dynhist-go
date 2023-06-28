@@ -316,3 +316,9 @@ func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
 	assert.Greater(t, hh.Percentile(50), 1.0)
 	assert.Contains(t, hh.String(), "  +Inf]", "alignment error in second column")
 }
+
+func TestCollector_String_empty(t *testing.T) {
+	c := dynhist.Collector{}
+
+	assert.Equal(t, "", c.String())
+}

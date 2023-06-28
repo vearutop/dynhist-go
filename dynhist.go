@@ -175,11 +175,15 @@ func (c *Collector) String() string {
 	c.Lock()
 	defer c.Unlock()
 
+	if len(c.Buckets) == 0 {
+		return ""
+	}
+
 	nLen := printfLen("%.2f", c.Min)
 	if printfLen("%.2f", c.Max) > nLen {
 		nLen = printfLen("%.2f", c.Max)
 	}
-	// if c.Max is +Inf, the second largest element can be the longest.
+	// if c.Max is +Inf, the second-largest element can be the longest.
 	if maxLen := printfLen("%.2f", c.Buckets[len(c.Buckets)-1].Min); maxLen > nLen {
 		nLen = maxLen
 	}
