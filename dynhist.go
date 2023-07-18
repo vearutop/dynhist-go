@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 	"runtime/metrics"
-	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -180,8 +180,8 @@ func (c *Collector) String() string {
 	}
 
 	nLen := printfLen("%.2f", c.Min)
-	if printfLen("%.2f", c.Max) > nLen {
-		nLen = printfLen("%.2f", c.Max)
+	if maxLen := printfLen("%.2f", c.Max); maxLen > nLen {
+		nLen = maxLen
 	}
 	// if c.Max is +Inf, the second-largest element can be the longest.
 	if maxLen := printfLen("%.2f", c.Buckets[len(c.Buckets)-1].Min); maxLen > nLen {
@@ -189,37 +189,36 @@ func (c *Collector) String() string {
 	}
 
 	cLen := printfLen("%d", c.Count)
-	sLen := ""
+	sLen := 0
 
-	var res string
+	var res strings.Builder
+
+	fmt.Fprintf(&res, "[%*s %*s] %*s total%%", nLen, "min", nLen, "max", cLen, "cnt")
 
 	if c.PrintSum {
 		sLen = printfLen("%.2f", c.Sum)
-		res = fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% %"+sLen+"s (%d events)\n", "min", "max", "cnt", "sum", c.Count)
-	} else {
-		res = fmt.Sprintf("[%"+nLen+"s %"+nLen+"s] %"+cLen+"s total%% (%d events)\n", "min", "max", "cnt", c.Count)
+		fmt.Fprintf(&res, " %*s", sLen, "sum")
 	}
+
+	fmt.Fprintf(&res, " (%d events)\n", c.Count)
 
 	for _, b := range c.Buckets {
 		percent := float64(100*b.Count) / float64(c.Count)
 
-		dots := ""
-		for i := 0; i < int(percent); i++ {
-			dots += "."
-		}
-
-		if len(dots) > 0 {
-			dots = " " + dots
-		}
+		fmt.Fprintf(&res, "[%*.2f %*.2f] %*d %5.2f%%", nLen, b.Min, nLen, b.Max, cLen, b.Count, percent)
 
 		if c.PrintSum {
-			res += fmt.Sprintf("[%"+nLen+".2f %"+nLen+".2f] %"+cLen+"d %5.2f%% %"+sLen+".2f%s\n", b.Min, b.Max, b.Count, percent, b.Sum, dots)
-		} else {
-			res += fmt.Sprintf("[%"+nLen+".2f %"+nLen+".2f] %"+cLen+"d %5.2f%%%s\n", b.Min, b.Max, b.Count, percent, dots)
+			fmt.Fprintf(&res, " %*.2f", sLen, b.Sum)
 		}
+
+		if dots := strings.Repeat(".", int(percent)); len(dots) > 0 {
+			fmt.Fprint(&res, " ", dots)
+		}
+
+		fmt.Fprintln(&res)
 	}
 
-	return res
+	return res.String()
 }
 
 // LoadFromRuntimeMetrics replaces existing buckets with data from metrics.Float64Histogram.
@@ -253,10 +252,10 @@ func (c *Collector) LoadFromRuntimeMetrics(h *metrics.Float64Histogram) {
 	}
 }
 
-func printfLen(format string, val interface{}) string {
+func printfLen(format string, val interface{}) int {
 	s := fmt.Sprintf(format, val)
 
-	return strconv.Itoa(len(s))
+	return len(s)
 }
 
 // Percentile returns maximum boundary for a fraction of values.
