@@ -74,7 +74,7 @@ func TestAvgWidth(t *testing.T) {
 		BucketsLimit: 10,
 	}
 	src := rand.NewSource(1)
-	r := rand.New(src) //nolint:gosec
+	r := rand.New(src)
 
 	for i := 0; i < 10000; i++ {
 		c.Add(r.Float64())
@@ -126,7 +126,7 @@ func TestExpWidth(t *testing.T) {
 		WeightFunc: dynhist.ExpWidth(1.2, 0.9),
 	}
 	src := rand.NewSource(1)
-	r := rand.New(src) //nolint:gosec
+	r := rand.New(src)
 
 	for i := 0; i < 100000; i++ {
 		c.Add(r.ExpFloat64())
@@ -312,7 +312,7 @@ func TestCollector_LoadFromRuntimeMetrics(t *testing.T) {
 	hh := dynhist.Collector{}
 	hh.LoadFromRuntimeMetrics(h)
 
-	assert.Greater(t, hh.Bucket.Sum, float64(size))
+	assert.Greater(t, hh.Sum, float64(size))
 	assert.Greater(t, hh.Percentile(50), 1.0)
 	assert.Contains(t, hh.String(), "  +Inf]", "alignment error in second column")
 }

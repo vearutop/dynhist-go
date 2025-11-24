@@ -112,6 +112,7 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 	if c.RawValues != nil {
 		c.RawValues = append(c.RawValues, v)
 	}
+
 	c.Count++
 	c.Sum += v
 
@@ -235,18 +236,18 @@ func (c *Collector) LoadFromRuntimeMetrics(h *metrics.Float64Histogram) {
 
 	for i, b := range h.Buckets[1:] {
 		bb := Bucket{
-			Min:   c.Bucket.Max,
+			Min:   c.Max,
 			Max:   b,
-			Count: int(h.Counts[i]),
+			Count: int(h.Counts[i]), //nolint:gosec
 		}
 
 		if bb.Count != 0 && !math.IsInf(b, 0) {
 			bb.Sum = float64(bb.Count) * b
-			c.Bucket.Sum += bb.Sum
+			c.Sum += bb.Sum
 		}
 
-		c.Bucket.Count += bb.Count
-		c.Bucket.Max = b
+		c.Count += bb.Count
+		c.Max = b
 
 		c.Buckets[i] = bb
 	}
