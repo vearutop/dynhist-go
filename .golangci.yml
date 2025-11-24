@@ -5,6 +5,8 @@ run:
 linters:
   default: all
   disable:
+    - funlen
+    - cyclop
     - embeddedstructfieldcheck
     - noinlineerr
     - wsl_v5

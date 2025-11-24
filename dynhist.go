@@ -171,6 +171,10 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 	}
 }
 
+func isInt(f float64) bool {
+	return f == float64(int(f))
+}
+
 // String renders buckets value.
 func (c *Collector) String() string {
 	c.Lock()
@@ -180,12 +184,32 @@ func (c *Collector) String() string {
 		return ""
 	}
 
-	nLen := printfLen("%.2f", c.Min)
-	if maxLen := printfLen("%.2f", c.Max); maxLen > nLen {
+	hasIntBuckets := true
+
+	for _, b := range c.Buckets {
+		if !isInt(b.Min) || !isInt(b.Max) || !isInt(b.Sum) {
+			hasIntBuckets = false
+
+			break
+		}
+	}
+
+	bucketFmt := "%.2f"
+	statsFmt := "[%*.2f %*.2f] %*d %5.2f%%"
+	sumFmt := " %*.2f"
+
+	if hasIntBuckets {
+		bucketFmt = "%.0f"
+		statsFmt = "[%*.0f %*.0f] %*d %5.2f%%"
+		sumFmt = " %*.0f"
+	}
+
+	nLen := printfLen(bucketFmt, c.Min)
+	if maxLen := printfLen(bucketFmt, c.Max); maxLen > nLen {
 		nLen = maxLen
 	}
 	// if c.Max is +Inf, the second-largest element can be the longest.
-	if maxLen := printfLen("%.2f", c.Buckets[len(c.Buckets)-1].Min); maxLen > nLen {
+	if maxLen := printfLen(bucketFmt, c.Buckets[len(c.Buckets)-1].Min); maxLen > nLen {
 		nLen = maxLen
 	}
 
@@ -197,19 +221,19 @@ func (c *Collector) String() string {
 	fmt.Fprintf(&res, "[%*s %*s] %*s total%%", nLen, "min", nLen, "max", cLen, "cnt")
 
 	if c.PrintSum {
-		sLen = printfLen("%.2f", c.Sum)
+		sLen = printfLen(bucketFmt, c.Sum)
 		fmt.Fprintf(&res, " %*s", sLen, "sum")
 	}
 
-	fmt.Fprintf(&res, " (%d events)\n", c.Count)
+	fmt.Fprintf(&res, " (total count: %d)\n", c.Count)
 
 	for _, b := range c.Buckets {
 		percent := float64(100*b.Count) / float64(c.Count)
 
-		fmt.Fprintf(&res, "[%*.2f %*.2f] %*d %5.2f%%", nLen, b.Min, nLen, b.Max, cLen, b.Count, percent)
+		fmt.Fprintf(&res, statsFmt, nLen, b.Min, nLen, b.Max, cLen, b.Count, percent)
 
 		if c.PrintSum {
-			fmt.Fprintf(&res, " %*.2f", sLen, b.Sum)
+			fmt.Fprintf(&res, sumFmt, sLen, b.Sum)
 		}
 
 		if dots := strings.Repeat(".", int(percent)); len(dots) > 0 {
@@ -274,4 +298,25 @@ func (c *Collector) Percentile(percent float64) float64 {
 	}
 
 	return c.Max
+}
+
+// PercentileSum returns maximum boundary for a sum of smaller values.
+func (c *Collector) PercentileSum(percent float64) float64 {
+	c.Lock()
+	defer c.Unlock()
+	targetCount := int(percent * float64(c.Count) / 100)
+
+	count := 0
+	sum := 0.0
+
+	for _, b := range c.Buckets {
+		count += b.Count
+		sum += b.Sum
+
+		if count >= targetCount {
+			return sum
+		}
+	}
+
+	return c.Sum
 }
