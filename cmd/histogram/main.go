@@ -21,6 +21,7 @@ func main() {
 
 	if *ver {
 		fmt.Println(version.Info().Version)
+
 		return
 	}
 
