@@ -45,6 +45,36 @@ type Bucket struct {
 	Sum   float64
 }
 
+// Snapshot is a consistent copy of a collector's distribution and bucket limit.
+// Buckets and RawValues are detached from the collector and may be modified by
+// the caller. RawValues is nil when retention was disabled.
+type Snapshot struct {
+	Bucket
+	BucketsLimit int
+	Buckets      []Bucket
+	RawValues    []float64
+}
+
+// Snapshot copies totals, buckets, the bucket limit and retained raw values under
+// one lock. It may be called concurrently with Add, AddN, Squash and other reads.
+func (c *Collector) Snapshot() Snapshot {
+	c.Lock()
+	defer c.Unlock()
+
+	snapshot := Snapshot{Bucket: c.Bucket, BucketsLimit: c.BucketsLimit}
+	if c.Buckets != nil {
+		snapshot.Buckets = make([]Bucket, len(c.Buckets))
+		copy(snapshot.Buckets, c.Buckets)
+	}
+
+	if c.RawValues != nil {
+		snapshot.RawValues = make([]float64, len(c.RawValues))
+		copy(snapshot.RawValues, c.RawValues)
+	}
+
+	return snapshot
+}
+
 // ExpWidth creates a weight function with exponential bucket width growing.
 //
 // For exponentially distributed data, values of 1.2 for sumWidthPow and 1 for spacingPow should be a good fit.
@@ -70,51 +100,45 @@ func AvgWidth(b1, b2, bTot Bucket) float64 {
 	return b2.Max - b1.Min
 }
 
-// Add collects value.
-func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
-	c.Lock()
-	defer func() {
-		if len(c.Buckets) > c.BucketsLimit {
-			minWeight := 0.0
-			mergePoint := 0
+// Add collects one observation of v.
+func (c *Collector) Add(v float64) {
+	c.AddN(v, 1)
+}
 
-			for i := 1; i < len(c.Buckets); i++ {
-				if mergePoint == 0 {
-					mergePoint = i
-					minWeight = c.WeightFunc(c.Buckets[i-1], c.Buckets[i], c.Bucket)
-
-					continue
-				}
-
-				weight := c.WeightFunc(c.Buckets[i-1], c.Buckets[i], c.Bucket)
-				if weight < minWeight {
-					minWeight = weight
-					mergePoint = i
-				}
-			}
-
-			b1 := c.Buckets[mergePoint-1]
-			b2 := c.Buckets[mergePoint]
-			merged := Bucket{
-				Count: b1.Count + b2.Count,
-				Sum:   b1.Sum + b2.Sum,
-				Min:   b1.Min,
-				Max:   b2.Max,
-			}
-
-			c.Buckets = append(c.Buckets[:mergePoint-1], c.Buckets[mergePoint:]...)
-
-			c.Buckets[mergePoint-1] = merged
-		}
-		c.Unlock()
-	}()
-
-	if c.RawValues != nil {
-		c.RawValues = append(c.RawValues, v)
+// AddN collects n observations of v under one lock and merges buckets once.
+// It does nothing when n is zero and panics when n is negative or the total
+// count would overflow int, leaving the collector unchanged in either case.
+//
+// With RawValues enabled, v is retained n times, using memory proportional to n.
+// Otherwise collection cost is independent of n. A custom WeightFunc that uses
+// counts or sums can produce different boundaries than n individual Add calls.
+func (c *Collector) AddN(v float64, n int) { //nolint:funlen,cyclop
+	if n < 0 {
+		panic("dynhist: negative observation count")
 	}
 
-	c.Count++
-	c.Sum += v
+	if n == 0 {
+		return
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	if n > int(^uint(0)>>1)-c.Count {
+		panic("dynhist: observation count overflows int")
+	}
+
+	defer func() { c.squash(c.BucketsLimit) }()
+
+	if c.RawValues != nil {
+		for i := 0; i < n; i++ {
+			c.RawValues = append(c.RawValues, v)
+		}
+	}
+
+	sum := float64(n) * v
+	c.Count += n
+	c.Sum += sum
 
 	if len(c.Buckets) == 0 {
 		if c.BucketsLimit == 0 {
@@ -128,8 +152,8 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 		c.Buckets = make([]Bucket, 1, c.BucketsLimit)
 		c.Buckets[0].Min = v
 		c.Buckets[0].Max = v
-		c.Buckets[0].Count = 1
-		c.Buckets[0].Sum = v
+		c.Buckets[0].Count = n
+		c.Buckets[0].Sum = sum
 
 		c.Min = v
 		c.Max = v
@@ -138,14 +162,14 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 	}
 
 	if v < c.Min {
-		c.Buckets = append([]Bucket{{Count: 1, Min: v, Max: v, Sum: v}}, c.Buckets...)
+		c.Buckets = append([]Bucket{{Count: n, Min: v, Max: v, Sum: sum}}, c.Buckets...)
 		c.Min = v
 
 		return
 	}
 
 	if v > c.Max {
-		c.Buckets = append(c.Buckets, Bucket{Count: 1, Min: v, Max: v, Sum: v})
+		c.Buckets = append(c.Buckets, Bucket{Count: n, Min: v, Max: v, Sum: sum})
 		c.Max = v
 
 		return
@@ -155,8 +179,8 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 	for i, b := range c.Buckets {
 		if v >= b.Min {
 			if v <= b.Max {
-				c.Buckets[i].Count++
-				c.Buckets[i].Sum += v
+				c.Buckets[i].Count += n
+				c.Buckets[i].Sum += sum
 
 				return
 			}
@@ -164,10 +188,56 @@ func (c *Collector) Add(v float64) { //nolint:funlen,cyclop
 			// Insert new bucket.
 			c.Buckets = append(c.Buckets, Bucket{})
 			copy(c.Buckets[i+1:], c.Buckets[i:])
-			c.Buckets[i] = Bucket{Count: 1, Min: v, Max: v, Sum: v}
+			c.Buckets[i] = Bucket{Count: n, Min: v, Max: v, Sum: sum}
 
 			return
 		}
+	}
+}
+
+// Squash sets the bucket limit and merges adjacent buckets until at most limit
+// remain, using WeightFunc (AvgWidth by default). Existing buckets are never
+// split. Counts, sums, observed bounds and RawValues are preserved.
+// Subsequent additions respect the new limit. Squash panics if limit is not
+// positive, leaving the collector unchanged.
+func (c *Collector) Squash(limit int) {
+	if limit <= 0 {
+		panic("dynhist: bucket limit must be positive")
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	c.BucketsLimit = limit
+	c.squash(limit)
+}
+
+// squash requires the collector lock to be held.
+func (c *Collector) squash(limit int) {
+	if c.WeightFunc == nil {
+		c.WeightFunc = AvgWidth
+	}
+
+	for len(c.Buckets) > limit {
+		mergePoint := 1
+		minWeight := c.WeightFunc(c.Buckets[0], c.Buckets[1], c.Bucket)
+
+		for i := 2; i < len(c.Buckets); i++ {
+			weight := c.WeightFunc(c.Buckets[i-1], c.Buckets[i], c.Bucket)
+			if weight < minWeight {
+				minWeight = weight
+				mergePoint = i
+			}
+		}
+
+		b1 := &c.Buckets[mergePoint-1]
+		b2 := c.Buckets[mergePoint]
+		b1.Count += b2.Count
+		b1.Sum += b2.Sum
+		b1.Max = b2.Max
+
+		copy(c.Buckets[mergePoint:], c.Buckets[mergePoint+1:])
+		c.Buckets = c.Buckets[:len(c.Buckets)-1]
 	}
 }
 
@@ -228,7 +298,7 @@ func (c *Collector) String() string {
 	fmt.Fprintf(&res, " (total count: %d)\n", c.Count)
 
 	for _, b := range c.Buckets {
-		percent := float64(100*b.Count) / float64(c.Count)
+		percent := float64(b.Count) * 100 / float64(c.Count)
 
 		fmt.Fprintf(&res, statsFmt, nLen, b.Min, nLen, b.Max, cLen, b.Count, percent)
 
@@ -283,40 +353,87 @@ func printfLen(format string, val interface{}) int {
 	return len(s)
 }
 
-// Percentile returns maximum boundary for a fraction of values.
+// Percentile returns the upper boundary of the bucket containing the
+// ceil(percent * Count / 100)-th observation. It is an approximate nearest-rank
+// percentile based on weighted counts, without interpolation within a bucket.
+// Percent zero returns the lower boundary of the first nonempty bucket.
+// Empty distributions and percentages outside [0, 100], including NaN, return NaN.
 func (c *Collector) Percentile(percent float64) float64 {
 	c.Lock()
 	defer c.Unlock()
-	targetCount := int(percent * float64(c.Count) / 100)
 
-	count := 0
-	for _, b := range c.Buckets {
-		count += b.Count
-		if count >= targetCount {
-			return b.Max
-		}
-	}
+	value, _ := percentile(percent, c.Bucket, c.Buckets)
 
-	return c.Max
+	return value
 }
 
-// PercentileSum returns maximum boundary for a sum of smaller values.
+// Percentiles returns the requested percentile estimates in argument order,
+// holding one lock so every estimate uses the same distribution. It has the same
+// nearest-rank, boundary and NaN behavior as Percentile. No arguments returns nil.
+func (c *Collector) Percentiles(percents ...float64) []float64 {
+	if len(percents) == 0 {
+		return nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	values := make([]float64, len(percents))
+	for i, percent := range percents {
+		values[i], _ = percentile(percent, c.Bucket, c.Buckets)
+	}
+
+	return values
+}
+
+// PercentileSum returns the sum of all buckets through the bucket selected by
+// Percentile. The selected bucket is included in full. Percent zero returns zero
+// for a nonempty distribution. Empty distributions and invalid percentages return NaN.
 func (c *Collector) PercentileSum(percent float64) float64 {
 	c.Lock()
 	defer c.Unlock()
-	targetCount := int(percent * float64(c.Count) / 100)
 
-	count := 0
-	sum := 0.0
+	_, sum := percentile(percent, c.Bucket, c.Buckets)
 
-	for _, b := range c.Buckets {
-		count += b.Count
-		sum += b.Sum
+	return sum
+}
 
-		if count >= targetCount {
-			return sum
+func percentile(percent float64, total Bucket, buckets []Bucket) (float64, float64) {
+	if total.Count == 0 || math.IsNaN(percent) || percent < 0 || percent > 100 {
+		return math.NaN(), math.NaN()
+	}
+
+	// Clamp before conversion: float64(MaxInt) can round up beyond int's range.
+	target := total.Count
+
+	if percent < 100 {
+		rank := math.Ceil(percent * float64(total.Count) / 100)
+		if rank < float64(total.Count) {
+			target = int(rank)
+			if target < 1 {
+				target = 1
+			}
 		}
 	}
 
-	return c.Sum
+	count, sum := 0, 0.0
+
+	for _, b := range buckets {
+		if b.Count == 0 {
+			continue
+		}
+
+		if percent == 0 {
+			return b.Min, 0
+		}
+
+		count += b.Count
+		sum += b.Sum
+
+		if count >= target {
+			return b.Max, sum
+		}
+	}
+
+	return math.NaN(), math.NaN()
 }

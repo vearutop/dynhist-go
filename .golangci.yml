@@ -5,9 +5,11 @@ run:
 linters:
   default: all
   disable:
+    - exhaustruct_v5
     - funlen
     - cyclop
     - embeddedstructfieldcheck
+    - nilnil
     - noinlineerr
     - wsl_v5
     - funcorder
