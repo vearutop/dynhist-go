@@ -7,6 +7,21 @@ import (
 	"github.com/vearutop/dynhist-go"
 )
 
+func ExampleCollector_AddN() {
+	c := dynhist.Collector{BucketsLimit: 200}
+	c.AddN(12, 990)
+	c.AddN(36, 9)
+	c.AddN(100, 1)
+
+	// Query percentiles before reducing the output to fewer buckets.
+	fmt.Println("P99:", c.Percentile(99))
+	c.Squash(1)
+	fmt.Println(c.Buckets)
+	// Output:
+	// P99: 12
+	// [{12 100 1000 12304}]
+}
+
 func ExampleAvgWidth() {
 	c := dynhist.Collector{
 		BucketsLimit: 10,

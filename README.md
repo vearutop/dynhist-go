@@ -8,6 +8,35 @@
 
 This library implements streaming counter with dynamic bucketing by value size.
 
+## Weighted input and output buckets
+
+Use `AddN(value, count)` for preaggregated observations, such as SQL results
+containing a value and its frequency. Collection is independent of `count` unless
+`RawValues` is enabled, in which case all `count` observations are retained.
+Zero counts are ignored; negative counts and integer count overflow panic without
+changing the collector. `Add(value)` is equivalent to `AddN(value, 1)`.
+
+```go
+c := dynhist.Collector{BucketsLimit: 200}
+c.AddN(12, 990)
+c.AddN(36, 9)
+c.AddN(100, 1)
+
+p99 := c.Percentile(99) // Query the finer collection buckets first.
+c.Squash(20)           // Then reduce to at most 20 output buckets.
+fmt.Println(p99, c.Buckets)
+```
+
+`Squash(limit)` merges adjacent buckets using the configured `WeightFunc`, or
+`AvgWidth` by default. It preserves counts, sums, observed bounds and raw values,
+and updates `BucketsLimit` for subsequent additions. It never splits existing
+buckets, and nonpositive limits panic without changing the collector.
+
+Both methods lock the collector. A weighted batch is merged as a whole; custom
+weight functions based on counts or sums may choose different boundaries than
+repeated individual `Add` calls. Weighted sums use `float64(count) * value`, so
+floating-point rounding may also differ from repeated addition.
+
 ## Usage
 
 ```go
