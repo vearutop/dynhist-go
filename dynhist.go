@@ -45,6 +45,36 @@ type Bucket struct {
 	Sum   float64
 }
 
+// Snapshot is a consistent copy of a collector's distribution and bucket limit.
+// Buckets and RawValues are detached from the collector and may be modified by
+// the caller. RawValues is nil when retention was disabled.
+type Snapshot struct {
+	Bucket
+	BucketsLimit int
+	Buckets      []Bucket
+	RawValues    []float64
+}
+
+// Snapshot copies totals, buckets, the bucket limit and retained raw values under
+// one lock. It may be called concurrently with Add, AddN, Squash and other reads.
+func (c *Collector) Snapshot() Snapshot {
+	c.Lock()
+	defer c.Unlock()
+
+	snapshot := Snapshot{Bucket: c.Bucket, BucketsLimit: c.BucketsLimit}
+	if c.Buckets != nil {
+		snapshot.Buckets = make([]Bucket, len(c.Buckets))
+		copy(snapshot.Buckets, c.Buckets)
+	}
+
+	if c.RawValues != nil {
+		snapshot.RawValues = make([]float64, len(c.RawValues))
+		copy(snapshot.RawValues, c.RawValues)
+	}
+
+	return snapshot
+}
+
 // ExpWidth creates a weight function with exponential bucket width growing.
 //
 // For exponentially distributed data, values of 1.2 for sumWidthPow and 1 for spacingPow should be a good fit.
@@ -323,40 +353,87 @@ func printfLen(format string, val interface{}) int {
 	return len(s)
 }
 
-// Percentile returns maximum boundary for a fraction of values.
+// Percentile returns the upper boundary of the bucket containing the
+// ceil(percent * Count / 100)-th observation. It is an approximate nearest-rank
+// percentile based on weighted counts, without interpolation within a bucket.
+// Percent zero returns the lower boundary of the first nonempty bucket.
+// Empty distributions and percentages outside [0, 100], including NaN, return NaN.
 func (c *Collector) Percentile(percent float64) float64 {
 	c.Lock()
 	defer c.Unlock()
-	targetCount := int(percent * float64(c.Count) / 100)
 
-	count := 0
-	for _, b := range c.Buckets {
-		count += b.Count
-		if count >= targetCount {
-			return b.Max
-		}
-	}
+	value, _ := percentile(percent, c.Bucket, c.Buckets)
 
-	return c.Max
+	return value
 }
 
-// PercentileSum returns maximum boundary for a sum of smaller values.
+// Percentiles returns the requested percentile estimates in argument order,
+// holding one lock so every estimate uses the same distribution. It has the same
+// nearest-rank, boundary and NaN behavior as Percentile. No arguments returns nil.
+func (c *Collector) Percentiles(percents ...float64) []float64 {
+	if len(percents) == 0 {
+		return nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	values := make([]float64, len(percents))
+	for i, percent := range percents {
+		values[i], _ = percentile(percent, c.Bucket, c.Buckets)
+	}
+
+	return values
+}
+
+// PercentileSum returns the sum of all buckets through the bucket selected by
+// Percentile. The selected bucket is included in full. Percent zero returns zero
+// for a nonempty distribution. Empty distributions and invalid percentages return NaN.
 func (c *Collector) PercentileSum(percent float64) float64 {
 	c.Lock()
 	defer c.Unlock()
-	targetCount := int(percent * float64(c.Count) / 100)
 
-	count := 0
-	sum := 0.0
+	_, sum := percentile(percent, c.Bucket, c.Buckets)
 
-	for _, b := range c.Buckets {
-		count += b.Count
-		sum += b.Sum
+	return sum
+}
 
-		if count >= targetCount {
-			return sum
+func percentile(percent float64, total Bucket, buckets []Bucket) (float64, float64) {
+	if total.Count == 0 || math.IsNaN(percent) || percent < 0 || percent > 100 {
+		return math.NaN(), math.NaN()
+	}
+
+	// Clamp before conversion: float64(MaxInt) can round up beyond int's range.
+	target := total.Count
+
+	if percent < 100 {
+		rank := math.Ceil(percent * float64(total.Count) / 100)
+		if rank < float64(total.Count) {
+			target = int(rank)
+			if target < 1 {
+				target = 1
+			}
 		}
 	}
 
-	return c.Sum
+	count, sum := 0, 0.0
+
+	for _, b := range buckets {
+		if b.Count == 0 {
+			continue
+		}
+
+		if percent == 0 {
+			return b.Min, 0
+		}
+
+		count += b.Count
+		sum += b.Sum
+
+		if count >= target {
+			return b.Max, sum
+		}
+	}
+
+	return math.NaN(), math.NaN()
 }

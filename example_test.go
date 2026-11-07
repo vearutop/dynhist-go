@@ -22,6 +22,24 @@ func ExampleCollector_AddN() {
 	// [{12 100 1000 12304}]
 }
 
+func ExampleCollector_Percentiles() {
+	c := dynhist.Collector{}
+	c.Add(10)
+	c.Add(20)
+	c.Add(30)
+	fmt.Println(c.Percentiles(50, 90, 99))
+	// Output: [20 30 30]
+}
+
+func ExampleCollector_Snapshot() {
+	c := dynhist.Collector{}
+	c.AddN(12, 3)
+	snapshot := c.Snapshot()
+	c.Add(36)
+	fmt.Println(snapshot.Count, snapshot.Buckets)
+	// Output: 3 [{12 12 3 36}]
+}
+
 func ExampleAvgWidth() {
 	c := dynhist.Collector{
 		BucketsLimit: 10,
